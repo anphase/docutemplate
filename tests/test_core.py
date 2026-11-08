@@ -478,3 +478,20 @@ def test_ordinary_pushbutton_image(flatten):
     page = PdfReader(BytesIO(result)).pages[0]
     assert len(page.images) == 1
     assert page.get_contents().get_data().count(b" Do") == 1
+
+
+@pytest.mark.parametrize("flatten", [False, True])
+def test_xfa_hybrid_form_drops_xfa(make_pdf, data, flatten):
+    # IRS-style hybrid forms carry an XFA copy of the data that Acrobat prefers
+    # over the AcroForm values, so a filled form would still show blanks.
+    writer = PdfWriter(clone_from=PdfReader(BytesIO(make_pdf())))
+    writer.root_object["/AcroForm"][NameObject("/XFA")] = ArrayObject(
+        [TextStringObject("template"), writer._add_object(DictionaryObject())]
+    )
+    buffer = BytesIO()
+    writer.write(buffer)
+    out = PdfReader(BytesIO(fill(buffer.getvalue(), data, flatten=flatten)))
+    acroform = out.trailer["/Root"].get("/AcroForm", {})
+    assert "/XFA" not in acroform
+    if not flatten:
+        assert out.get_fields()["full_name"]["/V"] == "Ada Lovelace"

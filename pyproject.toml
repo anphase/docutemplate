@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{name = "anphase"}]
-dependencies = ["PyPDFForm>=3.5,<3.6", "Jinja2>=3.1.6,<4"]
+dependencies = ["PyPDFForm>=3.5,<3.6", "pypdf>=5,<7","Jinja2>=3.1.6,<4"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",

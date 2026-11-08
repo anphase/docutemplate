@@ -204,6 +204,9 @@ def _finalize(
             NameObject("/AcroForm"), DictionaryObject()
         ).get_object()
         acroform[NameObject("/Fields")] = ArrayObject(roots)
+        # Hybrid XFA forms (e.g. IRS) make Acrobat show the XFA data, not the
+        # AcroForm values filled here; dropping it leaves a plain AcroForm.
+        acroform.pop("/XFA", None)
     fields = writer.get_fields() or {}
     values: dict[str, str | list[str]] = {}
     for name, field in fields.items():
