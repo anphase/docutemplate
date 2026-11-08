@@ -6,6 +6,7 @@ All notable changes to this project are documented here, in the
 ## [Unreleased]
 
 ### Added
+- `docs/internal/architecture.md`: architecture doc and diagram. (2026-11-09)
 - `docs/compatibility.md`: results from filling the IRS W-9 and Form 1040.
 
 ### Fixed
