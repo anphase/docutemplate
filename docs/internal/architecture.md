@@ -60,4 +60,5 @@ Jinja's sandbox, with strict undefined variables by default (`--no-strict` relax
   an sdist and wheel; a PyPI release is planned. It runs wherever it is installed and has no
   hosted service.
 - **Local gate:** `scripts/check.sh` runs ruff, `ruff format --check`, strict mypy and pytest
-  (coverage floor 90%). There are no GitHub Actions workflows.
+  (coverage floor 98%); `scripts/ci-local.sh` adds the cyclomatic-complexity ceiling
+  (`docs/quality/baseline.md`). There are no GitHub Actions workflows.
