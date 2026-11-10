@@ -13,6 +13,9 @@ pip install docutemplate
 pip install 'docutemplate[images]'
 ```
 
+docutemplate installs Pillow by default, so the first command supports image and
+signature fields; `docutemplate[images]` installs the same packages.
+
 ## A 10-line example
 
 Create a fillable `application.pdf` with `{{ customer.name }}` in the name field's
@@ -105,6 +108,11 @@ data key containing the image. Fields without templates also accept paths or
 bytes directly by field name. A blank or `None` image is skipped. Signature
 fields stamp a handwritten image; they do not create cryptographic signatures.
 
+docutemplate reads a path that a template renders only when the path equals a
+string or `Path` in your data, including one nested inside a dict, list or tuple.
+It raises `FieldError` for any other rendered path, so a form from someone else
+cannot make it embed a local file you did not supply.
+
 Pushbutton fields (`/FT /Btn` with the pushbutton flag) are treated as image
 fields. Ordinary AcroForm pushbuttons and PyPDFForm image fields both support
 stamping; no special JavaScript action or PyPDFForm marker is required. The
@@ -126,6 +134,24 @@ for PDF parsing/filling errors. File access errors remain `OSError` subclasses.
 AcroForm PDFs are supported; encrypted PDFs must be decrypted first. XFA-only
 forms are not supported. Use trusted data objects; sandboxing restricts template
 access but does not impose resource limits on template evaluation.
+
+### PDF security
+
+A PDF form from someone else can carry templates written to misuse the program
+that fills it, and docutemplate limits such a form in three ways. Its templates
+receive only the data you pass, with no way to import Python code. A template
+cannot make docutemplate embed a local file, because docutemplate reads an image
+path only when your data supplies that path. A form whose fields name one another
+as parents in a loop does not hang `fill`.
+
+docutemplate trusts the data you pass. It reads a string supplied for an image
+or signature field as a file path, unless the string names a key in your data.
+When those strings come from your own users, pass image bytes instead, so that a
+user cannot name a file on your machine.
+
+docutemplate sets no time or memory limit on template evaluation or PDF parsing.
+When you accept PDFs from others, run each fill in a separate process with a
+timeout and a memory cap.
 
 ## CLI
 

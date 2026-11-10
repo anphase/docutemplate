@@ -159,7 +159,7 @@ def test_choice_without_export_values():
     assert core._field_info("x", {"/FT": "/Other"})["type"] == "unknown"
 
 
-def image_form():
+def image_form(photo="{{ picture }}"):
     blank = BytesIO()
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
@@ -167,7 +167,7 @@ def image_form():
     form = PdfWrapper(blank.getvalue())
     form.create_field(
         Fields.ImageField(
-            name="photo", page_number=1, x=50, y=500, tooltip="{{ picture }}", width=100, height=80
+            name="photo", page_number=1, x=50, y=500, tooltip=photo, width=100, height=80
         )
     )
     form.create_field(
@@ -495,3 +495,121 @@ def test_xfa_hybrid_form_drops_xfa(make_pdf, data, flatten):
     assert "/XFA" not in acroform
     if not flatten:
         assert out.get_fields()["full_name"]["/V"] == "Ada Lovelace"
+
+
+class _Node(dict):
+    """A dictionary standing in for a pypdf object, with a budget of dereferences."""
+
+    budget = 50
+
+    def get_object(self):
+        _Node.budget -= 1
+        assert _Node.budget > 0, "parent chain was followed without end"
+        return self
+
+
+def test_owner_stops_on_a_parent_cycle():
+    _Node.budget = 50
+    first, second = _Node(), _Node()
+    first["/Parent"], second["/Parent"] = second, first
+    assert core._owner(first) is second
+    alone = _Node()
+    alone["/Parent"] = alone
+    assert core._owner(alone) is alone
+    named = _Node({"/T": "group"})
+    child = _Node({"/Parent": named})
+    assert core._owner(child) is named
+
+
+def cyclic_parent_form(*, self_parent):
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    widget = writer._add_object(
+        DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Annot"),
+                NameObject("/Subtype"): NameObject("/Widget"),
+                NameObject("/Rect"): ArrayObject([NumberObject(0)] * 4),
+            }
+        )
+    )
+    parent = widget if self_parent else writer._add_object(DictionaryObject())
+    widget.get_object()[NameObject("/Parent")] = parent
+    parent.get_object()[NameObject("/Parent")] = widget
+    page[NameObject("/Annots")] = ArrayObject([widget])
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("self_parent", [True, False])
+def test_fill_terminates_on_a_cyclic_parent_chain(self_parent):
+    import faulthandler
+
+    pdf = cyclic_parent_form(self_parent=self_parent)
+    faulthandler.dump_traceback_later(20, exit=True)  # a hang fails the run, not stalls it
+    try:
+        assert inspect(pdf) == []
+        assert fill(pdf, {}).startswith(b"%PDF-")
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+
+
+@pytest.mark.parametrize(
+    "tooltip",
+    ["{{{{ '{path}' }}}}", "{{{{ folder }}}}/private.png", "{{{{ folder ~ '/private.png' }}}}"],
+)
+def test_template_cannot_name_an_image_file(tmp_path, tooltip):
+    image = tmp_path / "private.png"
+    image.write_bytes(png())
+    pdf = image_form(photo=tooltip.format(path=image))
+    with pytest.raises(FieldError, match="photo.*template cannot name an image file"):
+        fill(pdf, {"folder": str(tmp_path), "signing": None})
+
+
+def test_template_may_select_an_image_path_held_in_the_data(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"picture": str(image), "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+    assert fill(pdf, {"picture": "", "signing": None}).startswith(b"%PDF-")
+
+
+def test_template_may_select_an_image_path_nested_in_the_data(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{{ customer.photos[0] }}")
+    result = fill(pdf, {"customer": {"photos": [str(image)]}, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+    result = fill(pdf, {"customer": {"photos": (str(image),)}, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+def test_template_may_select_a_path_object_held_in_the_data(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"picture": image, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+def test_template_cannot_derive_an_image_path_from_a_path_object(tmp_path):
+    (tmp_path / "private.png").write_bytes(png())
+    held = tmp_path / "stamp.png"
+    held.write_bytes(png())
+    pdf = image_form(photo="{{ picture.parent / 'private.png' }}")
+    with pytest.raises(FieldError, match="photo.*template cannot name an image file"):
+        fill(pdf, {"picture": held, "signing": None})
+    result = fill(image_form(photo="{{ picture }}"), {"picture": held, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+def test_self_referencing_data_does_not_break_image_selection(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    loop: dict[str, object] = {}
+    loop["self"] = loop
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"loop": loop, "picture": str(image), "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
