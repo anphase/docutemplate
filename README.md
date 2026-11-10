@@ -9,8 +9,6 @@ uses its Python PDF backend for filling and appearance generation.
 
 ```sh
 pip install docutemplate
-# For image and handwritten signature fields:
-pip install 'docutemplate[images]'
 ```
 
 ## A 10-line example
@@ -97,11 +95,14 @@ fields use their fully qualified names, such as `customer.name`.
 
 ### Images and handwritten signatures
 
-Install the `images` extra. Set the tooltip to a single expression such as
+Set the tooltip to a single expression such as
 `{{ signature_image }}` and pass `{"signature_image": Path("signature.png")}` or
 `{"signature_image": image_bytes}`. Single expressions retain the original path
-or bytes. More complex templates can render a path or the name of a top-level
-data key containing the image. Fields without templates also accept paths or
+or bytes. More complex templates can render the name of a top-level
+data key containing the image, or a path string that the data itself holds (at
+any depth). A template cannot name a file of its own: a literal or assembled
+path raises `FieldError`, so a form from someone else cannot pick a local file
+to embed. Fields without templates also accept paths or
 bytes directly by field name. A blank or `None` image is skipped. Signature
 fields stamp a handwritten image; they do not create cryptographic signatures.
 
@@ -126,6 +127,15 @@ for PDF parsing/filling errors. File access errors remain `OSError` subclasses.
 AcroForm PDFs are supported; encrypted PDFs must be decrypted first. XFA-only
 forms are not supported. Use trusted data objects; sandboxing restricts template
 access but does not impose resource limits on template evaluation.
+
+### Security
+
+Template PDFs are treated as untrusted: tooltips run in the Jinja sandbox and
+cannot name local files, and malformed field hierarchies are handled without
+looping. The data is trusted, so a string supplied for an image or signature field
+is read as a file path: when values come from your own users, pass image bytes
+rather than their strings. Neither template evaluation nor PDF parsing is time
+or memory limited; when accepting PDFs from others, run fills with your own limits.
 
 ## CLI
 

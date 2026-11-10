@@ -39,4 +39,4 @@ Both are hybrid XFA/AcroForm files from Adobe LiveCycle with deeply nested names
 ## Dependency note
 
 `pypdf` 7 removed an API PyPDFForm 3.5 uses for image stamping, so image and signature
-fields failed with a fresh install. `pypdf` is now declared directly as `>=5,<7`.
+fields failed with a fresh install. `pypdf` is now declared directly, below 7 (currently `>=6.21.4,<7`).
