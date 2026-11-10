@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from io import BytesIO
 from os import PathLike, fspath
 from pathlib import Path
@@ -128,8 +128,13 @@ def _ancestry(field: Any) -> tuple[str, dict[str, Any], Any]:
 
 def _owner(widget: Any) -> Any:
     """Return the terminal field, which may be separate from its widget."""
+    seen = {id(widget)}
     while "/T" not in widget and "/Parent" in widget:
-        widget = widget["/Parent"].get_object()
+        parent = widget["/Parent"].get_object()
+        if id(parent) in seen:  # a crafted /Parent cycle must not loop forever
+            break
+        seen.add(id(parent))
+        widget = parent
     return widget
 
 
@@ -295,6 +300,37 @@ def _render(
     return env.from_string(source).render(dict(data))
 
 
+def _strings(value: object) -> Iterator[str]:
+    """Yield every string the data holds, at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, (Mapping, list, tuple)):
+        for item in value.values() if isinstance(value, Mapping) else value:
+            yield from _strings(item)
+
+
+def _image(value: object, data: Mapping[str, object]) -> bytes | None:
+    # A rendered key can select bytes from data, e.g. a conditional template
+    # returning 'approved_signature'. A single expression can return bytes directly.
+    if isinstance(value, str) and value in data:
+        value = data[value]
+    elif isinstance(value, str) and value and value not in _strings(data):
+        # Template PDFs are untrusted: one must not pick a local file to
+        # embed in the output. Paths are honoured only when the data holds them.
+        raise ValueError("a template cannot name an image file; pass its path in the data")
+    if value is None or value == "":
+        return None
+    if isinstance(value, (str, PathLike)):
+        value = Path(fspath(value)).read_bytes()
+    if not isinstance(value, bytes):
+        raise ValueError("expected an image path or image bytes")
+    from PIL import Image
+
+    with Image.open(BytesIO(value)) as image:
+        image.verify()
+    return value
+
+
 def _value(info: FieldInfo, value: object, data: Mapping[str, object]) -> object:
     kind = info["type"]
     if kind == "checkbox":
@@ -306,24 +342,8 @@ def _value(info: FieldInfo, value: object, data: Mapping[str, object]) -> object
         if option in info["options"]:
             return option
         raise ValueError(f"invalid radio option {option!r}; choose from {info['options']!r}")
-    if kind == "choice":
-        return "" if value is None else str(value)
     if kind in {"image", "signature"}:
-        # A rendered key can select bytes from data, e.g. a conditional template
-        # returning 'approved_signature'. A single expression can return bytes directly.
-        if isinstance(value, str) and value in data:
-            value = data[value]
-        if value is None or value == "":
-            return None
-        if isinstance(value, (str, PathLike)):
-            value = Path(fspath(value)).read_bytes()
-        if not isinstance(value, bytes):
-            raise ValueError("expected an image path or image bytes")
-        from PIL import Image
-
-        with Image.open(BytesIO(value)) as image:
-            image.verify()
-        return value
+        return _image(value, data)
     return "" if value is None else str(value)
 
 
