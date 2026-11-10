@@ -9,8 +9,6 @@ uses its Python PDF backend for filling and appearance generation.
 
 ```sh
 pip install docutemplate
-# For image and handwritten signature fields:
-pip install 'docutemplate[images]'
 ```
 
 ## A 10-line example
@@ -97,11 +95,14 @@ fields use their fully qualified names, such as `customer.name`.
 
 ### Images and handwritten signatures
 
-Install the `images` extra. Set the tooltip to a single expression such as
+Set the tooltip to a single expression such as
 `{{ signature_image }}` and pass `{"signature_image": Path("signature.png")}` or
 `{"signature_image": image_bytes}`. Single expressions retain the original path
-or bytes. More complex templates can render a path or the name of a top-level
-data key containing the image. Fields without templates also accept paths or
+or bytes. Any other template must render the name of a top-level
+data key containing the image, or a path equal to a string or `Path` in your
+data, including one nested inside a dict, list or tuple. docutemplate raises
+`FieldError` for any other rendered path, so a form from someone else cannot
+make it embed a local file you did not supply. Fields without templates also accept paths or
 bytes directly by field name. A blank or `None` image is skipped. Signature
 fields stamp a handwritten image; they do not create cryptographic signatures.
 
@@ -126,6 +127,16 @@ for PDF parsing/filling errors. File access errors remain `OSError` subclasses.
 AcroForm PDFs are supported; encrypted PDFs must be decrypted first. XFA-only
 forms are not supported. Use trusted data objects; sandboxing restricts template
 access but does not impose resource limits on template evaluation.
+
+### Security
+
+docutemplate treats template PDFs as untrusted: it renders tooltips in the Jinja
+sandbox, reads an image path only when your data supplies that path, and stops
+following a field's `/Parent` chain when the chain loops back on itself. It trusts
+the data you pass, so it reads a string supplied for an image or signature field
+as a file path: when values come from your own users, pass image bytes rather than
+their strings. docutemplate sets no time or memory limit on template evaluation or
+PDF parsing; when accepting PDFs from others, run fills with your own limits.
 
 ## CLI
 
