@@ -223,7 +223,9 @@ def test_image_complex_template():
     source = "{% if enabled %}asset{% endif %}"
     assert core._render(env, source, {"enabled": True}, image=True) == "asset"
     assert (
-        core._value({"name": "x", "type": "choice", "template": None, "options": []}, None, {})
+        core._value(
+            {"name": "x", "type": "choice", "template": None, "options": []}, None, {}, set()
+        )
         == ""
     )
 
@@ -643,3 +645,19 @@ def test_self_referencing_data_does_not_break_image_selection(tmp_path):
     pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
     result = fill(pdf, {"loop": loop, "picture": str(image), "signing": None})
     assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{% set ignored = allowed.append(folder ~ '/private.png') %}{{ folder }}/private.png",
+        "{% set ignored = nested.update(extra=folder ~ '/private.png') %}{{ nested.extra }}",
+        "{% set ignored = nested.update(extra=folder ~ '/private.png') %}extra",
+    ],
+)
+def test_template_cannot_widen_the_data_to_name_an_image_file(tmp_path, template):
+    (tmp_path / "private.png").write_bytes(png())
+    data = {"folder": str(tmp_path), "allowed": [], "nested": {}, "signing": None}
+    with pytest.raises(FieldError, match="photo"):
+        fill(image_form(photo=template), data)
+    assert data["allowed"] == [] and data["nested"] == {}

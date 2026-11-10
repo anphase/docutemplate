@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from copy import deepcopy
 from io import BytesIO
 from os import PathLike, fspath
 from pathlib import Path
@@ -322,12 +323,12 @@ def _strings(value: object, seen: set[int] | None = None) -> Iterator[str]:
             yield from _strings(item, seen)
 
 
-def _image(value: object, data: Mapping[str, object]) -> bytes | None:
+def _image(value: object, data: Mapping[str, object], held: set[str]) -> bytes | None:
     # A rendered key can select bytes from data, e.g. a conditional template
     # returning 'approved_signature'. A single expression can return bytes directly.
     if isinstance(value, str) and value in data:
         value = data[value]
-    elif isinstance(value, (str, PathLike)) and value and fspath(value) not in _strings(data):
+    elif isinstance(value, (str, PathLike)) and value and fspath(value) not in held:
         # Template PDFs are untrusted: one must not pick a local file to
         # embed in the output. Paths are honoured only when the data holds them.
         raise ValueError("a template cannot name an image file; pass its path in the data")
@@ -344,7 +345,7 @@ def _image(value: object, data: Mapping[str, object]) -> bytes | None:
     return value
 
 
-def _value(info: FieldInfo, value: object, data: Mapping[str, object]) -> object:
+def _value(info: FieldInfo, value: object, data: Mapping[str, object], held: set[str]) -> object:
     kind = info["type"]
     if kind == "checkbox":
         if isinstance(value, str):
@@ -356,7 +357,7 @@ def _value(info: FieldInfo, value: object, data: Mapping[str, object]) -> object
             return option
         raise ValueError(f"invalid radio option {option!r}; choose from {info['options']!r}")
     if kind in {"image", "signature"}:
-        return _image(value, data)
+        return _image(value, data, held)
     return "" if value is None else str(value)
 
 
@@ -376,6 +377,10 @@ def fill(
     content = _source_bytes(template_pdf)
     fields = _inspect(content)
     env = _Environment(autoescape=False, undefined=StrictUndefined if strict else Undefined)
+    # Templates render against a copy, so one that mutates the data (a list's
+    # append, a dict's update) cannot widen what the caller supplied.
+    held = set(_strings(data))
+    rendered = deepcopy(dict(data))
     values: dict[str, Any] = {}
     choice_values: dict[str, str] = {}
     button_values: dict[str, bool | str] = {}
@@ -388,9 +393,9 @@ def fill(
             value = (
                 data[name]
                 if source is None
-                else _render(env, source, data, image=info["type"] in {"image", "signature"})
+                else _render(env, source, rendered, image=info["type"] in {"image", "signature"})
             )
-            value = _value(info, value, data)
+            value = _value(info, value, data, held)
             if info["type"] == "choice":
                 choice_values[name] = str(value)
             if info["type"] in {"checkbox", "radio"}:
