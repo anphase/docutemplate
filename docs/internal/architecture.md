@@ -43,9 +43,9 @@ path given with `-o`. Nothing is cached, logged or persisted, and no secrets are
 | Dependency | Use |
 | --- | --- |
 | PyPDFForm `>=3.5,<3.6` | Field discovery, filling, image stamping, flatten. |
-| pypdf `>=5,<7` | Direct form structure access and XFA removal. Pinned below 7, which broke image stamping. |
+| pypdf `>=6.21.4,<7` | Direct form structure access and XFA removal. Pinned below 7, which broke image stamping; the floor excludes releases with published crafted-PDF denial of service advisories. |
 | Jinja2 `>=3.1.6,<4` | Template rendering in a sandboxed environment, so tooltip templates cannot run arbitrary code. |
-| Pillow `>=10` (optional, `images` extra) | Image stamping. |
+| Pillow `>=13` | Image validation and stamping. PyPDFForm installs it in any case; the floor excludes releases with published decoder advisories. The `images` extra remains as an alias. |
 
 No network calls are made at runtime.
 
@@ -53,6 +53,13 @@ No network calls are made at runtime.
 
 Template PDFs and their tooltips are untrusted input. Tooltips are rendered only through
 Jinja's sandbox, with strict undefined variables by default (`--no-strict` relaxes this).
+The sandbox also closes path objects in the data to templates, since a path's methods read
+files.
+A template cannot name a local image file: an image path is read only when the data holds
+it. Cyclic field hierarchies in a crafted PDF end instead of looping. The data is trusted:
+a string given for an image field is read as a file path, so a caller passing on values
+from its own users must pass image bytes. Template evaluation and PDF size are not
+resource-limited; a caller handling untrusted PDFs sets its own time and memory limits.
 
 ## Distribution
 
