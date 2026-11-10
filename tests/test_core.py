@@ -582,3 +582,21 @@ def test_template_may_select_an_image_path_nested_in_the_data(tmp_path):
     pdf = image_form(photo="{{ customer.photos[0] }}")
     result = fill(pdf, {"customer": {"photos": [str(image)]}, "signing": None})
     assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+def test_template_may_select_a_path_object_held_in_the_data(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"picture": image, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+def test_self_referencing_data_does_not_break_image_selection(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    loop: dict[str, object] = {}
+    loop["self"] = loop
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"loop": loop, "picture": str(image), "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1

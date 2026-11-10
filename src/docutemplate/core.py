@@ -300,13 +300,17 @@ def _render(
     return env.from_string(source).render(dict(data))
 
 
-def _strings(value: object) -> Iterator[str]:
-    """Yield every string the data holds, at any depth."""
+def _strings(value: object, seen: set[int] | None = None) -> Iterator[str]:
+    """Yield every string (and path) the data holds, at any depth."""
+    seen = set() if seen is None else seen
     if isinstance(value, str):
         yield value
-    elif isinstance(value, (Mapping, list, tuple)):
+    elif isinstance(value, PathLike):
+        yield fspath(value)
+    elif isinstance(value, (Mapping, list, tuple)) and id(value) not in seen:
+        seen.add(id(value))  # data may hold a self-referencing container
         for item in value.values() if isinstance(value, Mapping) else value:
-            yield from _strings(item)
+            yield from _strings(item, seen)
 
 
 def _image(value: object, data: Mapping[str, object]) -> bytes | None:
