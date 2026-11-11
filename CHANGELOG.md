@@ -6,8 +6,10 @@ All notable changes to this project are documented here, in the
 ## [Unreleased]
 
 ### Added
-- `docs/internal/architecture.md`: architecture doc and diagram. (2026-11-09)
 - `docs/compatibility.md`: results from filling the IRS W-9 and Form 1040.
+
+### Removed
+- Internal architecture notes (`docs/internal/`) from the repository. (2026-11-12)
 
 ### Fixed
 - Pin `pypdf<7`: a fresh install resolved pypdf 7, which broke image and signature stamping.
