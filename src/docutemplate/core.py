@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from io import BytesIO
 from os import PathLike, fspath
 from pathlib import Path
 from typing import Any, BinaryIO, Literal, TypedDict
 
-from jinja2 import StrictUndefined, TemplateError, Undefined, nodes
+from jinja2 import StrictUndefined, TemplateError, Undefined, meta, nodes
 from jinja2.sandbox import SandboxedEnvironment
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject, NameObject, TextStringObject
@@ -17,7 +17,7 @@ from PyPDFForm.middleware.checkbox import Checkbox
 from PyPDFForm.middleware.image import Image
 from PyPDFForm.middleware.radio import Radio
 
-from .errors import FieldError, PDFError
+from .errors import DocutemplateError, FieldError, PDFError
 
 PdfSource = str | PathLike[str] | bytes | BinaryIO
 FieldType = Literal["text", "checkbox", "radio", "choice", "image", "signature", "unknown"]
@@ -341,7 +341,75 @@ def fill(
     Image/signature fields stamp images; they do not create digital signatures.
     """
     content = _source_bytes(template_pdf)
+    return _fill(content, _inspect(content), data, flatten=flatten, strict=strict)
+
+
+def fill_many(
+    template_pdf: PdfSource,
+    rows: Iterable[Mapping[str, object]],
+    *,
+    flatten: bool = False,
+    strict: bool = True,
+) -> list[bytes | DocutemplateError]:
+    """Fill one PDF form once per row, reading the template a single time.
+
+    Return one item per row, in order: the filled PDF bytes, or the
+    DocutemplateError for that row, so one bad row does not block the rest.
+    An unreadable template raises PDFError, as it would for every row.
+    """
+    content = _source_bytes(template_pdf)
     fields = _inspect(content)
+    results: list[bytes | DocutemplateError] = []
+    for row in rows:
+        try:
+            results.append(_fill(content, fields, row, flatten=flatten, strict=strict))
+        except DocutemplateError as exc:
+            results.append(exc)
+    return results
+
+
+def schema(template_pdf: PdfSource) -> dict[str, Any]:
+    """Describe the data a form accepts as a JSON Schema (draft 2020-12) object.
+
+    Variables used by tooltip templates are required and untyped. Fields
+    without a template are optional keys typed by field type, which fill
+    writes verbatim, so a caller can validate rows before calling fill.
+    """
+    env = SandboxedEnvironment(autoescape=False)
+    properties: dict[str, Any] = {}
+    required: set[str] = set()
+    for info in inspect(template_pdf):
+        if info["template"] is None:
+            properties[info["name"]] = _field_schema(info)
+        else:
+            required |= meta.find_undeclared_variables(env.parse(info["template"]))
+    for name in required:
+        properties[name] = {}
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": dict(sorted(properties.items())),
+        "required": sorted(required),
+    }
+
+
+def _field_schema(info: FieldInfo) -> dict[str, Any]:
+    kind = info["type"]
+    if kind == "checkbox":
+        return {"type": "boolean"}
+    if kind == "radio":
+        return {"enum": info["options"]}
+    return {} if kind == "unknown" else {"type": "string"}
+
+
+def _fill(
+    content: bytes,
+    fields: list[FieldInfo],
+    data: Mapping[str, object],
+    *,
+    flatten: bool,
+    strict: bool,
+) -> bytes:
     env = SandboxedEnvironment(autoescape=False, undefined=StrictUndefined if strict else Undefined)
     values: dict[str, Any] = {}
     choice_values: dict[str, str] = {}
