@@ -120,8 +120,8 @@ bytes directly by field name. A blank or `None` image is skipped. Signature
 fields stamp a handwritten image; they do not create cryptographic signatures.
 
 docutemplate accepts a rendered image path when it matches a string or `Path`
-value in your data, including values nested in dicts, lists or tuples. A rendered
-string can also select a top-level data key that holds an image path or bytes.
+value in your data, including values nested in dicts, lists or tuples. docutemplate also uses a
+rendered string to select a top-level data key containing an image path or bytes.
 docutemplate raises `FieldError` for any other rendered image path.
 
 Pushbutton fields (`/FT /Btn` with the pushbutton flag) are treated as image
@@ -157,8 +157,7 @@ between fields and stops following those references.
 docutemplate trusts the data you pass. docutemplate allows templates to call
 public methods on custom data objects, and those calls can change data or
 trigger other side effects. docutemplate blocks template calls to mutating
-methods on built-in lists, dicts and sets. Custom object methods can still change
-the data you pass. For forms filled from someone else's data, pass plain strings,
+methods on built-in lists, dicts and sets. For forms filled from someone else's data, pass plain strings,
 numbers, lists and dicts. docutemplate reads image files from paths supplied in
 your data, including paths selected by rendered templates. When your users
 supply image or signature values, accept image bytes so they cannot select files
