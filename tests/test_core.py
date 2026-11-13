@@ -1,4 +1,5 @@
 from io import BytesIO
+from types import MappingProxyType
 
 import pytest
 from pypdf import PdfReader, PdfWriter
@@ -71,6 +72,13 @@ def test_syntax_error(make_pdf, data, source):
 def test_sandbox(make_pdf, data):
     with pytest.raises(FieldError, match="filtered.*unsafe"):
         fill(make_pdf({"filtered": "{{ first.__class__.__mro__ }}"}), data)
+
+
+@pytest.mark.parametrize("template", ["{{ customer.name }}", "{{ first }}"])
+def test_mapping_proxy_data_renders(make_pdf, data, template):
+    row = MappingProxyType({**data, "customer": MappingProxyType({"name": "Ada"})})
+    result = fill(make_pdf({"filtered": template}), row)
+    assert fields(result)["filtered"]["/V"] == "Ada"
 
 
 def test_blocks_comments_filters_autoescape(make_pdf, data):
@@ -658,7 +666,7 @@ def test_self_referencing_data_does_not_break_image_selection(tmp_path):
 def test_template_cannot_widen_the_data_to_name_an_image_file(tmp_path, template):
     (tmp_path / "private.png").write_bytes(png())
     data = {"folder": str(tmp_path), "allowed": [], "nested": {}, "signing": None}
-    with pytest.raises(FieldError, match="photo"):
+    with pytest.raises(FieldError, match="photo.*unsafe"):
         fill(image_form(photo=template), data)
     assert data["allowed"] == [] and data["nested"] == {}
 
@@ -670,6 +678,21 @@ def test_fill_many_isolates_row_errors(make_pdf, data):
     assert fields(results[2])["filtered"]["/V"] == "GRACE"
     assert results[1].field == "full_name"
     assert core.fill_many(make_pdf(), []) == []
+
+
+def test_fill_many_isolates_mapping_proxy_row_errors(make_pdf, data):
+    pdf = make_pdf({"filtered": "{{ customer.name }}"})
+    rows = [
+        {**data, "customer": MappingProxyType({"name": "Ada"})},
+        {**data, "customer": MappingProxyType({})},
+        {**data, "customer": MappingProxyType({"name": "Grace"})},
+    ]
+    first, error, last = core.fill_many(pdf, iter(rows))
+    assert fields(first)["filtered"]["/V"] == "Ada"
+    assert isinstance(error, FieldError)
+    assert error.field == "filtered"
+    assert "name" in str(error)
+    assert fields(last)["filtered"]["/V"] == "Grace"
 
 
 def test_fill_many_matches_fill(make_pdf, data):
@@ -765,12 +788,18 @@ def test_fill_many_image_allowlist_is_per_row(tmp_path, flatten):
             assert not page.get("/Annots")
 
 
-def test_fill_many_copies_each_row(make_pdf, data):
-    pdf = make_pdf({"filtered": "{% set ignored = names.append(first) %}{{ names | length }}"})
-    row = {**data, "names": []}
-    results = core.fill_many(pdf, [row, row])
-    assert [fields(result)["filtered"]["/V"] for result in results] == ["1", "1"]
-    assert row["names"] == []
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize(
+    "container,mutation",
+    [([], "names.append(first)"), ({}, "names.update(name=first)"), (set(), "names.add(first)")],
+)
+def test_fill_many_refuses_container_mutation(make_pdf, data, container, mutation, strict):
+    pdf = make_pdf({"filtered": "{% set ignored = " + mutation + " %}{{ names | length }}"})
+    row = {**data, "names": container}
+    results = core.fill_many(pdf, [row, row], strict=strict)
+    assert all(isinstance(item, FieldError) and item.field == "filtered" for item in results)
+    assert all("unsafe" in str(item) for item in results)
+    assert not container
 
 
 def test_schema_does_not_execute_image_templates(monkeypatch):

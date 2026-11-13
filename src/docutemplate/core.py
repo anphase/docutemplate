@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
-from copy import deepcopy
 from io import BytesIO
 from os import PathLike, fspath
 from pathlib import Path
 from typing import Any, BinaryIO, Literal, TypedDict
 
 from jinja2 import StrictUndefined, TemplateError, Undefined, meta, nodes
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2.sandbox import ImmutableSandboxedEnvironment, SandboxedEnvironment
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject, NameObject, TextStringObject
 from PyPDFForm import PdfWrapper
@@ -127,8 +126,8 @@ def _ancestry(field: Any) -> tuple[str, dict[str, Any], Any]:
     return ".".join(names), merged, chain[-1]
 
 
-class _Environment(SandboxedEnvironment):
-    """The Jinja sandbox, with path objects in the data closed to templates."""
+class _Environment(ImmutableSandboxedEnvironment):
+    """An immutable Jinja sandbox, with path objects closed to templates."""
 
     def is_safe_attribute(self, obj: Any, attr: str, value: Any) -> bool:
         # A path's methods read, write and walk the file system, so a template
@@ -445,10 +444,9 @@ def _fill(
     strict: bool,
 ) -> bytes:
     env = _Environment(autoescape=False, undefined=StrictUndefined if strict else Undefined)
-    # Templates render against a copy, so one that mutates the data (a list's
-    # append, a dict's update) cannot widen what the caller supplied.
+    # Capture image paths before rendering. The immutable sandbox refuses
+    # container mutations, so templates cannot widen what the caller supplied.
     held = set(_strings(data))
-    rendered = deepcopy(dict(data))
     values: dict[str, Any] = {}
     choice_values: dict[str, str] = {}
     button_values: dict[str, bool | str] = {}
@@ -461,7 +459,7 @@ def _fill(
             value = (
                 data[name]
                 if source is None
-                else _render(env, source, rendered, image=info["type"] in {"image", "signature"})
+                else _render(env, source, data, image=info["type"] in {"image", "signature"})
             )
             value = _value(info, value, data, held)
             if info["type"] == "choice":
