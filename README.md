@@ -154,7 +154,9 @@ scripts/check.sh
 ```
 
 The check script uses `.venv` when present and runs Ruff lint/format checks,
-strict mypy on the package, and pytest with a 90% branch-coverage threshold.
+strict mypy on the package, and pytest with a 98% branch-coverage threshold.
+`scripts/ci-local.sh` runs the same plus the cyclomatic-complexity ceiling; the
+baselines and ratchet rules are in `docs/quality/baseline.md`.
 Tests build their PDF forms locally and need no network access.
 
 ## Credits
