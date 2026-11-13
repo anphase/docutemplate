@@ -116,6 +116,11 @@ data key containing the image. Fields without templates also accept paths or
 bytes directly by field name. A blank or `None` image is skipped. Signature
 fields stamp a handwritten image; they do not create cryptographic signatures.
 
+docutemplate accepts a rendered image path when it matches a string or `Path`
+value in your data, including values nested in dicts, lists or tuples. docutemplate also uses a
+rendered string to select a top-level data key containing an image path or bytes.
+docutemplate raises `FieldError` for any other rendered image path.
+
 Pushbutton fields (`/FT /Btn` with the pushbutton flag) are treated as image
 fields. Ordinary AcroForm pushbuttons and PyPDFForm image fields both support
 stamping; no special JavaScript action or PyPDFForm marker is required. The
@@ -137,6 +142,27 @@ for PDF parsing/filling errors. File access errors remain `OSError` subclasses.
 AcroForm PDFs are supported; encrypted PDFs must be decrypted first. XFA-only
 forms are not supported. Use trusted data objects; sandboxing restricts template
 access but does not impose resource limits on template evaluation.
+
+### PDF security
+
+docutemplate treats PDF templates as untrusted and evaluates them against the
+data you pass. It blocks a template's access to attributes whose names start
+with an underscore, such as `__class__`, and to the attributes and methods of a
+`Path` in your data. docutemplate also detects circular parent references
+between fields and stops following those references.
+
+docutemplate trusts the data you pass. docutemplate allows templates to call
+public methods on custom data objects, and those calls can change data or
+trigger other side effects. docutemplate blocks template calls to mutating
+methods on built-in lists, dicts and sets. For forms filled from someone else's data, pass plain strings,
+numbers, lists and dicts. docutemplate reads image files from paths supplied in
+your data, including paths selected by rendered templates. When your users
+supply image or signature values, accept image bytes so they cannot select files
+on your machine.
+
+docutemplate sets no time or memory limit on template evaluation or PDF parsing.
+When you accept PDFs from others, run each fill in a separate process with a
+timeout and a memory cap.
 
 ## CLI
 
