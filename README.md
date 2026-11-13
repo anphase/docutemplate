@@ -154,15 +154,15 @@ with an underscore, such as `__class__`, and to the attributes and methods of a
 `Path` in your data. docutemplate also detects circular parent references
 between fields and stops following those references.
 
-docutemplate trusts the data you pass. A template can call the public methods
-of custom objects in that data, so those objects can expose side effects.
-The sandbox blocks methods that change a built-in list, dict or set, so your data
-stays as you passed it. When you fill a form from someone else, pass plain
-strings, numbers, lists and dicts. docutemplate reads a string supplied for an
-image or signature field as a file path, unless
-the string names a key in your data. When those strings come from your own
-users, pass image bytes instead, so that a user cannot name a file on your
-machine.
+docutemplate trusts the data you pass. docutemplate allows templates to call
+public methods on custom data objects, and those calls can change data or
+trigger other side effects. docutemplate blocks template calls to mutating
+methods on built-in lists, dicts and sets. Custom object methods can still change
+the data you pass. For forms filled from someone else's data, pass plain strings,
+numbers, lists and dicts. docutemplate reads image files from paths supplied in
+your data, including paths selected by rendered templates. When your users
+supply image or signature values, accept image bytes so they cannot select files
+on your machine.
 
 docutemplate sets no time or memory limit on template evaluation or PDF parsing.
 When you accept PDFs from others, run each fill in a separate process with a
