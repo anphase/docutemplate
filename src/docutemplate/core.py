@@ -384,7 +384,7 @@ def schema(template_pdf: PdfSource) -> dict[str, Any]:
         else:
             required |= meta.find_undeclared_variables(env.parse(info["template"]))
     for name in required:
-        properties[name] = {}
+        properties.setdefault(name, {})
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",

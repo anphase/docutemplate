@@ -541,3 +541,11 @@ def test_schema_types_untemplated_fields(make_pdf):
     assert props["consent"] == {"type": "boolean"}
     assert props["contact"] == {"enum": ["email", "post"]}
     assert props["country"] == {"type": "string"}
+
+
+def test_schema_keeps_field_constraints_for_a_required_variable(make_pdf):
+    # A tooltip that reads an untemplated radio field keeps that field's options.
+    tooltips = {k: "help" for k in ("filtered", "consent", "contact", "country")}
+    result = core.schema(make_pdf({**tooltips, "full_name": "{{ contact }}"}))
+    assert result["required"] == ["contact"]
+    assert result["properties"]["contact"] == {"enum": ["email", "post"]}
