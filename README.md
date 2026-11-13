@@ -119,9 +119,10 @@ data key containing the image. Fields without templates also accept paths or
 bytes directly by field name. A blank or `None` image is skipped. Signature
 fields stamp a handwritten image; they do not create cryptographic signatures.
 
-docutemplate reads a path that a template renders only when the path equals a
-string or `Path` in your data, including one nested inside a dict, list or tuple.
-It raises `FieldError` for any other rendered path.
+docutemplate accepts a rendered image path when it matches a string or `Path`
+value in your data, including values nested in dicts, lists or tuples. A rendered
+string can also select a top-level data key that holds an image path or bytes.
+docutemplate raises `FieldError` for any other rendered image path.
 
 Pushbutton fields (`/FT /Btn` with the pushbutton flag) are treated as image
 fields. Ordinary AcroForm pushbuttons and PyPDFForm image fields both support
@@ -153,9 +154,13 @@ with an underscore, such as `__class__`, and to the attributes and methods of a
 `Path` in your data. docutemplate also detects circular parent references
 between fields and stops following those references.
 
-docutemplate trusts the data you pass. It lets a template call the public
-methods of the other objects in that data, so pass plain values such as strings,
-numbers, lists and dicts when you fill a form from someone else. docutemplate
+docutemplate trusts the data you pass. A template can call the public methods
+of custom objects in that data, so those objects can expose side effects.
+Templates run against a copy of the data, so a method that changes a built-in
+list or dict leaves your data unchanged. When you fill a form from someone else,
+pass plain strings, numbers, lists and dicts.
+
+docutemplate
 reads a string supplied for an image or signature field as a file path, unless
 the string names a key in your data. When those strings come from your own
 users, pass image bytes instead, so that a user cannot name a file on your
