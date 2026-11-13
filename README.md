@@ -156,9 +156,10 @@ between fields and stops following those references.
 
 docutemplate trusts the data you pass. A template can call the public methods
 of custom objects in that data, so those objects can expose side effects.
-Templates run against a copy of the data, so a method that changes a built-in
-list or dict leaves your data unchanged. When you fill a form from someone else,
-pass plain strings, numbers, lists and dicts. docutemplate reads a string supplied for an image or signature field as a file path, unless
+The sandbox blocks methods that change a built-in list, dict or set, so your data
+stays as you passed it. When you fill a form from someone else, pass plain
+strings, numbers, lists and dicts. docutemplate reads a string supplied for an
+image or signature field as a file path, unless
 the string names a key in your data. When those strings come from your own
 users, pass image bytes instead, so that a user cannot name a file on your
 machine.
