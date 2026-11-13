@@ -661,3 +661,126 @@ def test_template_cannot_widen_the_data_to_name_an_image_file(tmp_path, template
     with pytest.raises(FieldError, match="photo"):
         fill(image_form(photo=template), data)
     assert data["allowed"] == [] and data["nested"] == {}
+
+
+def test_fill_many_isolates_row_errors(make_pdf, data):
+    rows = [data, {"first": "only"}, {**data, "first": "Grace"}]
+    results = core.fill_many(make_pdf(), rows)
+    assert [type(item) for item in results] == [bytes, FieldError, bytes]
+    assert fields(results[2])["filtered"]["/V"] == "GRACE"
+    assert results[1].field == "full_name"
+    assert core.fill_many(make_pdf(), []) == []
+
+
+def test_fill_many_matches_fill(make_pdf, data):
+    assert core.fill_many(make_pdf(), [data], flatten=True) == [
+        fill(make_pdf(), data, flatten=True)
+    ]
+
+
+def test_fill_many_bad_pdf_raises():
+    with pytest.raises(PDFError):
+        core.fill_many(b"not a pdf", [{}])
+
+
+def test_schema(make_pdf):
+    result = core.schema(make_pdf())
+    assert result["type"] == "object"
+    assert result["required"] == ["agreed", "contact_method", "country_code", "first", "last"]
+    props = result["properties"]
+    assert props["plain"] == {"type": "string"}
+    assert props["first"] == {}
+    assert "full_name" not in props
+    assert core.schema(make_pdf({"consent": "yes"}))["required"] == [
+        "contact_method",
+        "country_code",
+        "first",
+        "last",
+    ]
+
+
+def test_schema_types_untemplated_fields(make_pdf):
+    plain = {k: "help" for k in ("full_name", "filtered", "consent", "contact", "country")}
+    result = core.schema(make_pdf(plain))
+    assert result["required"] == []
+    props = result["properties"]
+    assert props["consent"] == {"type": "boolean"}
+    assert props["contact"] == {"enum": ["email", "post"]}
+    assert props["country"] == {"type": "string"}
+
+
+def test_schema_keeps_field_constraints_for_a_required_variable(make_pdf):
+    # A tooltip that reads an untemplated radio field keeps that field's options.
+    tooltips = {k: "help" for k in ("filtered", "consent", "contact", "country")}
+    result = core.schema(make_pdf({**tooltips, "full_name": "{{ contact }}"}))
+    assert result["required"] == ["contact"]
+    assert result["properties"]["contact"] == {"enum": ["email", "post"]}
+
+
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ folder }}/private.png",
+        "{{ picture.with_name('private.png').read_bytes() }}",
+        "{% set ignored = allowed.append(folder ~ '/private.png') %}{{ folder }}/private.png",
+        "{% set ignored = nested.update(extra=folder ~ '/private.png') %}{{ nested.extra }}",
+        "{% set ignored = nested.update(extra=folder ~ '/private.png') %}extra",
+    ],
+)
+def test_fill_many_preserves_image_security(tmp_path, template, strict):
+    private = tmp_path / "private.png"
+    private.write_bytes(png())
+    held = tmp_path / "stamp.png"
+    held.write_bytes(png())
+    row = {
+        "folder": str(tmp_path),
+        "picture": held,
+        "allowed": [],
+        "nested": {},
+        "signing": None,
+    }
+    results = core.fill_many(image_form(photo=template), [row, row], strict=strict)
+    assert all(isinstance(item, FieldError) and item.field == "photo" for item in results)
+    assert row["allowed"] == [] and row["nested"] == {}
+
+
+@pytest.mark.parametrize("flatten", [True, False])
+def test_fill_many_image_allowlist_is_per_row(tmp_path, flatten):
+    private = tmp_path / "private.png"
+    private.write_bytes(png())
+    pdf = image_form(photo="{{ folder }}/private.png")
+    rows = [
+        {"folder": str(tmp_path), "picture": private, "signing": png()},
+        {"folder": str(tmp_path), "signing": None},
+        {"folder": str(tmp_path), "picture": str(private), "signing": private},
+    ]
+    first, error, last = core.fill_many(BytesIO(pdf), iter(rows), flatten=flatten)
+    assert isinstance(error, FieldError)
+    assert "template cannot name an image file" in str(error)
+    for result in (first, last):
+        page = PdfReader(BytesIO(result)).pages[0]
+        assert page.get_contents().get_data().count(b" Do") == 2
+        if flatten:
+            assert not page.get("/Annots")
+
+
+def test_fill_many_copies_each_row(make_pdf, data):
+    pdf = make_pdf({"filtered": "{% set ignored = names.append(first) %}{{ names | length }}"})
+    row = {**data, "names": []}
+    results = core.fill_many(pdf, [row, row])
+    assert [fields(result)["filtered"]["/V"] for result in results] == ["1", "1"]
+    assert row["names"] == []
+
+
+def test_schema_does_not_execute_image_templates(monkeypatch):
+    pdf = image_form(photo="{{ picture.with_name('private.png').read_bytes() }}")
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("schema must not evaluate templates or read image files")
+
+    monkeypatch.setattr(core, "_render", unexpected)
+    monkeypatch.setattr(core.Path, "read_bytes", unexpected)
+    result = core.schema(pdf)
+    assert result["required"] == ["picture", "signing"]
+    assert result["properties"] == {"picture": {}, "signing": {}}

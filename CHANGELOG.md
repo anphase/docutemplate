@@ -6,7 +6,10 @@ All notable changes to this project are documented here, in the
 ## [Unreleased]
 
 ### Added
-- `docs/internal/architecture.md`: architecture doc and diagram. (2026-11-09)
+- `fill_many` (batch fill that reads the form once and returns a result or error per row) and
+  `schema` (JSON Schema of the data a form accepts), for Doculate's template hub. (2026-11-12)
+- `docs/quality/baseline.md` records coverage (98%) and cyclomatic-complexity (Ruff C901 max 22)
+  baselines; `scripts/ci-local.sh` gates both and only ratchets upward. (2026-11-09)
 - `docs/compatibility.md`: results from filling the IRS W-9 and Form 1040.
 
 ### Security
@@ -35,6 +38,9 @@ All notable changes to this project are documented here, in the
   in a template, what it trusts in the data and which limits it leaves to the caller (a
   timeout and a memory cap on a separate process); and a line under the install commands
   says Pillow comes with the package. No existing README line changes. (2026-11-11)
+
+### Removed
+- Internal architecture notes (`docs/internal/`) from the repository. (2026-11-12)
 
 ### Fixed
 - Pin `pypdf<7`: a fresh install resolved pypdf 7, which broke image and signature stamping.
