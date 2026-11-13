@@ -95,6 +95,17 @@ Types are `text`, `checkbox`, `radio`, `choice`, `image`, `signature`, or `unkno
 values for radio and choice fields, and is empty for other types. Hierarchical
 fields use their fully qualified names, such as `customer.name`.
 
+### Batches and validation
+
+`fill_many(template_pdf, rows, *, flatten=False, strict=True)` reads the form once and
+returns one item per row: the filled PDF bytes, or that row's `DocutemplateError`, so one
+bad row does not block the rest.
+
+`schema(template_pdf)` returns a JSON Schema object for the data a form accepts: variables
+used by tooltip templates are required, and fields without templates are optional keys typed
+by field type (boolean for checkboxes, an enum for radio options, string otherwise). Validate
+rows against it before calling `fill`.
+
 ### Images and handwritten signatures
 
 Install the `images` extra. Set the tooltip to a single expression such as
@@ -154,7 +165,9 @@ scripts/check.sh
 ```
 
 The check script uses `.venv` when present and runs Ruff lint/format checks,
-strict mypy on the package, and pytest with a 90% branch-coverage threshold.
+strict mypy on the package, and pytest with a 98% branch-coverage threshold.
+`scripts/ci-local.sh` runs the same plus the cyclomatic-complexity ceiling; the
+baselines and ratchet rules are in `docs/quality/baseline.md`.
 Tests build their PDF forms locally and need no network access.
 
 ## Credits

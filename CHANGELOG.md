@@ -6,6 +6,10 @@ All notable changes to this project are documented here, in the
 ## [Unreleased]
 
 ### Added
+- `fill_many` (batch fill that reads the form once and returns a result or error per row) and
+  `schema` (JSON Schema of the data a form accepts), for Doculate's template hub. (2026-11-12)
+- `docs/quality/baseline.md` records coverage (98%) and cyclomatic-complexity (Ruff C901 max 22)
+  baselines; `scripts/ci-local.sh` gates both and only ratchets upward. (2026-11-09)
 - `docs/compatibility.md`: results from filling the IRS W-9 and Form 1040.
 
 ### Removed
