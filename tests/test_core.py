@@ -495,3 +495,49 @@ def test_xfa_hybrid_form_drops_xfa(make_pdf, data, flatten):
     assert "/XFA" not in acroform
     if not flatten:
         assert out.get_fields()["full_name"]["/V"] == "Ada Lovelace"
+
+
+def test_fill_many_isolates_row_errors(make_pdf, data):
+    rows = [data, {"first": "only"}, {**data, "first": "Grace"}]
+    results = core.fill_many(make_pdf(), rows)
+    assert [type(item) for item in results] == [bytes, FieldError, bytes]
+    assert fields(results[2])["filtered"]["/V"] == "GRACE"
+    assert results[1].field == "full_name"
+    assert core.fill_many(make_pdf(), []) == []
+
+
+def test_fill_many_matches_fill(make_pdf, data):
+    assert core.fill_many(make_pdf(), [data], flatten=True) == [
+        fill(make_pdf(), data, flatten=True)
+    ]
+
+
+def test_fill_many_bad_pdf_raises():
+    with pytest.raises(PDFError):
+        core.fill_many(b"not a pdf", [{}])
+
+
+def test_schema(make_pdf):
+    result = core.schema(make_pdf())
+    assert result["type"] == "object"
+    assert result["required"] == ["agreed", "contact_method", "country_code", "first", "last"]
+    props = result["properties"]
+    assert props["plain"] == {"type": "string"}
+    assert props["first"] == {}
+    assert "full_name" not in props
+    assert core.schema(make_pdf({"consent": "yes"}))["required"] == [
+        "contact_method",
+        "country_code",
+        "first",
+        "last",
+    ]
+
+
+def test_schema_types_untemplated_fields(make_pdf):
+    plain = {k: "help" for k in ("full_name", "filtered", "consent", "contact", "country")}
+    result = core.schema(make_pdf(plain))
+    assert result["required"] == []
+    props = result["properties"]
+    assert props["consent"] == {"type": "boolean"}
+    assert props["contact"] == {"enum": ["email", "post"]}
+    assert props["country"] == {"type": "string"}
