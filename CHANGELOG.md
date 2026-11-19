@@ -20,6 +20,10 @@ All notable changes to this project are documented here, in the
 - Filling a hybrid XFA/AcroForm PDF (such as IRS forms) now removes the XFA data, so Acrobat
   shows the filled values instead of the stale XFA copy. (2026-11-09)
 
+### Security
+- Render templates with copies of caller data, block access to path object attributes, and
+  restrict image reads to paths supplied in the original data. Stop at cycles in PDF field parents.
+
 ## [0.1.0]
 
 ### Added

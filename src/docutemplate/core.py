@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from copy import deepcopy
 from io import BytesIO
 from os import PathLike, fspath
 from pathlib import Path
@@ -30,6 +31,13 @@ class FieldInfo(TypedDict):
     type: FieldType
     template: str | None
     options: list[str]
+
+
+class _Environment(SandboxedEnvironment):
+    """The Jinja sandbox with attribute access blocked on path objects."""
+
+    def is_safe_attribute(self, obj: Any, attr: str, value: Any) -> bool:
+        return not isinstance(obj, PathLike) and super().is_safe_attribute(obj, attr, value)
 
 
 def _source_bytes(source: PdfSource) -> bytes:
@@ -128,8 +136,13 @@ def _ancestry(field: Any) -> tuple[str, dict[str, Any], Any]:
 
 def _owner(widget: Any) -> Any:
     """Return the terminal field, which may be separate from its widget."""
+    seen = {id(widget)}
     while "/T" not in widget and "/Parent" in widget:
-        widget = widget["/Parent"].get_object()
+        parent = widget["/Parent"].get_object()
+        if id(parent) in seen:
+            break
+        seen.add(id(parent))
+        widget = parent
     return widget
 
 
@@ -295,7 +308,40 @@ def _render(
     return env.from_string(source).render(dict(data))
 
 
-def _value(info: FieldInfo, value: object, data: Mapping[str, object]) -> object:
+def _strings(value: object, seen: set[int] | None = None) -> Iterator[str]:
+    """Yield strings and paths from data, visiting each container once."""
+    seen = set() if seen is None else seen
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, PathLike):
+        yield fspath(value)
+    elif isinstance(value, (Mapping, list, tuple)) and id(value) not in seen:
+        seen.add(id(value))
+        for item in value.values() if isinstance(value, Mapping) else value:
+            yield from _strings(item, seen)
+
+
+def _image(value: object, data: Mapping[str, object], held: set[str]) -> bytes | None:
+    # A rendered key can select an image from the original data.
+    if isinstance(value, str) and value in data:
+        value = data[value]
+    if value is None or value == "":
+        return None
+    if isinstance(value, (str, PathLike)):
+        path = fspath(value)
+        if path not in held:
+            raise ValueError("a template cannot name an image file; pass its path in the data")
+        value = Path(path).read_bytes()
+    if not isinstance(value, bytes):
+        raise ValueError("expected an image path or image bytes")
+    from PIL import Image
+
+    with Image.open(BytesIO(value)) as image:
+        image.verify()
+    return value
+
+
+def _value(info: FieldInfo, value: object, data: Mapping[str, object], held: set[str]) -> object:
     kind = info["type"]
     if kind == "checkbox":
         if isinstance(value, str):
@@ -309,21 +355,7 @@ def _value(info: FieldInfo, value: object, data: Mapping[str, object]) -> object
     if kind == "choice":
         return "" if value is None else str(value)
     if kind in {"image", "signature"}:
-        # A rendered key can select bytes from data, e.g. a conditional template
-        # returning 'approved_signature'. A single expression can return bytes directly.
-        if isinstance(value, str) and value in data:
-            value = data[value]
-        if value is None or value == "":
-            return None
-        if isinstance(value, (str, PathLike)):
-            value = Path(fspath(value)).read_bytes()
-        if not isinstance(value, bytes):
-            raise ValueError("expected an image path or image bytes")
-        from PIL import Image
-
-        with Image.open(BytesIO(value)) as image:
-            image.verify()
-        return value
+        return _image(value, data, held)
     return "" if value is None else str(value)
 
 
@@ -375,7 +407,7 @@ def schema(template_pdf: PdfSource) -> dict[str, Any]:
     without a template are optional keys typed by field type, which fill
     writes verbatim, so a caller can validate rows before calling fill.
     """
-    env = SandboxedEnvironment(autoescape=False)
+    env = _Environment(autoescape=False)
     properties: dict[str, Any] = {}
     required: set[str] = set()
     for info in inspect(template_pdf):
@@ -410,7 +442,10 @@ def _fill(
     flatten: bool,
     strict: bool,
 ) -> bytes:
-    env = SandboxedEnvironment(autoescape=False, undefined=StrictUndefined if strict else Undefined)
+    env = _Environment(autoescape=False, undefined=StrictUndefined if strict else Undefined)
+    # Snapshot the paths before rendering and keep template mutations in the copy.
+    held = set(_strings(data))
+    rendered = deepcopy(dict(data))
     values: dict[str, Any] = {}
     choice_values: dict[str, str] = {}
     button_values: dict[str, bool | str] = {}
@@ -423,9 +458,9 @@ def _fill(
             value = (
                 data[name]
                 if source is None
-                else _render(env, source, data, image=info["type"] in {"image", "signature"})
+                else _render(env, source, rendered, image=info["type"] in {"image", "signature"})
             )
-            value = _value(info, value, data)
+            value = _value(info, value, data, held)
             if info["type"] == "choice":
                 choice_values[name] = str(value)
             if info["type"] in {"checkbox", "radio"}:

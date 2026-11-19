@@ -1,3 +1,4 @@
+import faulthandler
 from io import BytesIO
 
 import pytest
@@ -159,7 +160,7 @@ def test_choice_without_export_values():
     assert core._field_info("x", {"/FT": "/Other"})["type"] == "unknown"
 
 
-def image_form():
+def image_form(photo="{{ picture }}"):
     blank = BytesIO()
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
@@ -167,7 +168,7 @@ def image_form():
     form = PdfWrapper(blank.getvalue())
     form.create_field(
         Fields.ImageField(
-            name="photo", page_number=1, x=50, y=500, tooltip="{{ picture }}", width=100, height=80
+            name="photo", page_number=1, x=50, y=500, tooltip=photo, width=100, height=80
         )
     )
     form.create_field(
@@ -219,11 +220,13 @@ def test_image_errors_and_empty():
 
 
 def test_image_complex_template():
-    env = core.SandboxedEnvironment(autoescape=False)
+    env = core._Environment(autoescape=False)
     source = "{% if enabled %}asset{% endif %}"
     assert core._render(env, source, {"enabled": True}, image=True) == "asset"
     assert (
-        core._value({"name": "x", "type": "choice", "template": None, "options": []}, None, {})
+        core._value(
+            {"name": "x", "type": "choice", "template": None, "options": []}, None, {}, set()
+        )
         == ""
     )
 
@@ -549,3 +552,188 @@ def test_schema_keeps_field_constraints_for_a_required_variable(make_pdf):
     result = core.schema(make_pdf({**tooltips, "full_name": "{{ contact }}"}))
     assert result["required"] == ["contact"]
     assert result["properties"]["contact"] == {"enum": ["email", "post"]}
+
+
+class _Node(dict):
+    """A dictionary standing in for a pypdf object, with a budget of dereferences."""
+
+    budget = 50
+
+    def get_object(self):
+        _Node.budget -= 1
+        assert _Node.budget > 0, "parent chain was followed without end"
+        return self
+
+
+def test_owner_stops_on_a_parent_cycle():
+    _Node.budget = 50
+    first, second = _Node(), _Node()
+    first["/Parent"], second["/Parent"] = second, first
+    assert core._owner(first) is second
+    alone = _Node()
+    alone["/Parent"] = alone
+    assert core._owner(alone) is alone
+    named = _Node({"/T": "group"})
+    child = _Node({"/Parent": named})
+    assert core._owner(child) is named
+
+
+def _cyclic_parent_form(*, self_parent):
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    widget = writer._add_object(
+        DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Annot"),
+                NameObject("/Subtype"): NameObject("/Widget"),
+                NameObject("/Rect"): ArrayObject([NumberObject(0)] * 4),
+            }
+        )
+    )
+    parent = widget if self_parent else writer._add_object(DictionaryObject())
+    widget.get_object()[NameObject("/Parent")] = parent
+    parent.get_object()[NameObject("/Parent")] = widget
+    page[NameObject("/Annots")] = ArrayObject([widget])
+    return pdf_bytes(writer)
+
+
+@pytest.mark.parametrize("self_parent", [True, False])
+def test_fill_terminates_on_a_cyclic_parent_chain(self_parent):
+    pdf = _cyclic_parent_form(self_parent=self_parent)
+    faulthandler.dump_traceback_later(20, exit=True)  # a hang fails the run, not stalls it
+    try:
+        assert inspect(pdf) == []
+        assert fill(pdf, {}).startswith(b"%PDF-")
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+
+
+@pytest.mark.parametrize(
+    "tooltip",
+    ["{{{{ '{path}' }}}}", "{{{{ folder }}}}/private.png", "{{{{ folder ~ '/private.png' }}}}"],
+)
+def test_template_cannot_name_an_image_file(tmp_path, tooltip):
+    image = tmp_path / "private.png"
+    image.write_bytes(png())
+    pdf = image_form(photo=tooltip.format(path=image))
+    with pytest.raises(FieldError, match="photo.*template cannot name an image file"):
+        fill(pdf, {"folder": str(tmp_path), "signing": None})
+
+
+def test_template_may_select_an_image_path_held_in_the_data(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"picture": str(image), "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+    assert fill(pdf, {"picture": "", "signing": None}).startswith(b"%PDF-")
+
+
+def test_template_may_select_an_image_path_nested_in_the_data(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{{ customer.photos[0] }}")
+    result = fill(pdf, {"customer": {"photos": [str(image)]}, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+    result = fill(pdf, {"customer": {"photos": (str(image),)}, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+def test_template_may_select_a_path_object_held_in_the_data(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"picture": image, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+def test_template_cannot_derive_an_image_path_from_a_path_object(tmp_path):
+    (tmp_path / "private.png").write_bytes(png())
+    held = tmp_path / "stamp.png"
+    held.write_bytes(png())
+    pdf = image_form(photo="{{ folder / 'private.png' }}")
+    with pytest.raises(FieldError, match="photo.*template cannot name an image file"):
+        fill(pdf, {"picture": held, "folder": tmp_path, "signing": None})
+    result = fill(image_form(photo="{{ picture }}"), {"picture": held, "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ picture.parent.joinpath('private.png').read_bytes() }}",
+        "{{ picture.with_name('private.png').read_bytes() }}",
+        "{{ (folder / 'private.png').read_bytes() }}",
+        "{{ (picture | attr('read_bytes'))() }}",
+        "{{ ([picture] | map(attribute='read_bytes') | first)() }}",
+    ],
+)
+@pytest.mark.parametrize("strict", [True, False])
+def test_template_cannot_use_a_path_object_to_reach_files(tmp_path, template, strict):
+    (tmp_path / "private.png").write_bytes(png())
+    held = tmp_path / "stamp.png"
+    held.write_bytes(png())
+    data = {"picture": held, "folder": tmp_path, "signing": None}
+    with pytest.raises(FieldError, match="photo"):
+        fill(image_form(photo=template), data, strict=strict)
+
+
+def test_template_cannot_read_a_file_into_a_text_field(make_pdf, data, tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("classified")
+    pdf = make_pdf({"filtered": "{{ note.read_text() }}"})
+    with pytest.raises(FieldError, match="filtered.*unsafe"):
+        fill(pdf, {**data, "note": secret})
+    printed = fill(make_pdf({"filtered": "{{ note }}"}), {**data, "note": secret})
+    assert fields(printed)["filtered"]["/V"] == str(secret)
+
+
+def test_self_referencing_data_does_not_break_image_selection(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    loop: dict[str, object] = {}
+    loop["self"] = loop
+    pdf = image_form(photo="{% if picture %}{{ picture }}{% endif %}")
+    result = fill(pdf, {"loop": loop, "picture": str(image), "signing": None})
+    assert len(PdfReader(BytesIO(result)).pages[0].images) == 1
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{% set ignored = allowed.append(folder ~ '/private.png') %}{{ folder }}/private.png",
+        "{% set ignored = nested.update(extra=folder ~ '/private.png') %}{{ nested.extra }}",
+        "{% set ignored = nested.update(extra=folder ~ '/private.png') %}extra",
+    ],
+)
+def test_template_cannot_widen_the_data_to_name_an_image_file(tmp_path, template):
+    (tmp_path / "private.png").write_bytes(png())
+    data = {"folder": str(tmp_path), "allowed": [], "nested": {}, "signing": None}
+    with pytest.raises(FieldError, match="photo"):
+        fill(image_form(photo=template), data)
+    assert data["allowed"] == []
+    assert data["nested"] == {}
+
+def test_fill_many_refuses_image_paths_missing_from_a_row(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{{ '" + str(image) + "' }}")
+    filled, error = core.fill_many(pdf, [{"asset": image, "signing": None}, {"signing": None}])
+    assert isinstance(filled, bytes)
+    assert len(PdfReader(BytesIO(filled)).pages[0].images) == 1
+    assert isinstance(error, FieldError)
+    assert error.field == "photo"
+    assert "a template cannot name an image file; pass its path in the data" in str(error)
+
+
+def test_schema_environment_blocks_path_attributes(make_pdf, monkeypatch, tmp_path):
+    find_undeclared_variables = core.meta.find_undeclared_variables
+
+    def check_environment(tree):
+        # Schema parses tooltips without rendering them. Check the parser's environment.
+        result = tree.environment.getattr(tmp_path, "name")
+        assert isinstance(result, core.Undefined)
+        return find_undeclared_variables(tree)
+
+    monkeypatch.setattr(core.meta, "find_undeclared_variables", check_environment)
+    assert "note" in core.schema(make_pdf({"filtered": "{{ note.name }}"}))["required"]
