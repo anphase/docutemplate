@@ -1,5 +1,6 @@
 import faulthandler
 from io import BytesIO
+from types import MappingProxyType
 
 import pytest
 from pypdf import PdfReader, PdfWriter
@@ -714,6 +715,7 @@ def test_template_cannot_widen_the_data_to_name_an_image_file(tmp_path, template
     assert data["allowed"] == []
     assert data["nested"] == {}
 
+
 def test_fill_many_refuses_image_paths_missing_from_a_row(tmp_path):
     image = tmp_path / "stamp.png"
     image.write_bytes(png())
@@ -737,3 +739,39 @@ def test_schema_environment_blocks_path_attributes(make_pdf, monkeypatch, tmp_pa
 
     monkeypatch.setattr(core.meta, "find_undeclared_variables", check_environment)
     assert "note" in core.schema(make_pdf({"filtered": "{{ note.name }}"}))["required"]
+
+
+@pytest.mark.parametrize("template", ["{{ customer.name }}", "{{ first }}"])
+def test_mapping_proxy_data_renders(make_pdf, data, template):
+    row = MappingProxyType({**data, "customer": MappingProxyType({"name": "Ada"})})
+    result = fill(make_pdf({"filtered": template}), row)
+    assert fields(result)["filtered"]["/V"] == "Ada"
+
+
+def test_fill_many_isolates_mapping_proxy_row_errors(make_pdf, data):
+    pdf = make_pdf({"filtered": "{{ customer.name }}"})
+    rows = [
+        {**data, "customer": MappingProxyType({"name": "Ada"})},
+        {**data, "customer": MappingProxyType({})},
+        {**data, "customer": MappingProxyType({"name": "Grace"})},
+    ]
+    first, error, last = core.fill_many(pdf, iter(rows))
+    assert fields(first)["filtered"]["/V"] == "Ada"
+    assert isinstance(error, FieldError)
+    assert error.field == "filtered"
+    assert "name" in str(error)
+    assert fields(last)["filtered"]["/V"] == "Grace"
+
+
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize(
+    "container,mutation",
+    [([], "names.append(first)"), ({}, "names.update(name=first)"), (set(), "names.add(first)")],
+)
+def test_fill_many_refuses_container_mutation(make_pdf, data, container, mutation, strict):
+    pdf = make_pdf({"filtered": "{% set ignored = " + mutation + " %}{{ names | length }}"})
+    row = {**data, "names": container}
+    results = core.fill_many(pdf, [row, row], strict=strict)
+    assert all(isinstance(item, FieldError) and item.field == "filtered" for item in results)
+    assert all("unsafe" in str(item) for item in results)
+    assert not container
