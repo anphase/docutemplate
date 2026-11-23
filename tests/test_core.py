@@ -1,4 +1,6 @@
+import faulthandler
 from io import BytesIO
+from types import MappingProxyType
 
 import pytest
 from pypdf import PdfReader, PdfWriter
@@ -219,7 +221,7 @@ def test_image_errors_and_empty():
 
 
 def test_image_complex_template():
-    env = core.SandboxedEnvironment(autoescape=False)
+    env = core._Environment(autoescape=False)
     source = "{% if enabled %}asset{% endif %}"
     assert core._render(env, source, {"enabled": True}, image=True) == "asset"
     assert (
@@ -552,6 +554,7 @@ def test_schema_keeps_field_constraints_for_a_required_variable(make_pdf):
     assert result["required"] == ["contact"]
     assert result["properties"]["contact"] == {"enum": ["email", "post"]}
 
+
 class _Node(dict):
     """A dictionary standing in for a pypdf object, with a budget of dereferences."""
 
@@ -576,7 +579,7 @@ def test_owner_stops_on_a_parent_cycle():
     assert core._owner(child) is named
 
 
-def cyclic_parent_form(*, self_parent):
+def _cyclic_parent_form(*, self_parent):
     writer = PdfWriter()
     page = writer.add_blank_page(width=612, height=792)
     widget = writer._add_object(
@@ -592,16 +595,12 @@ def cyclic_parent_form(*, self_parent):
     widget.get_object()[NameObject("/Parent")] = parent
     parent.get_object()[NameObject("/Parent")] = widget
     page[NameObject("/Annots")] = ArrayObject([widget])
-    output = BytesIO()
-    writer.write(output)
-    return output.getvalue()
+    return pdf_bytes(writer)
 
 
 @pytest.mark.parametrize("self_parent", [True, False])
 def test_fill_terminates_on_a_cyclic_parent_chain(self_parent):
-    import faulthandler
-
-    pdf = cyclic_parent_form(self_parent=self_parent)
+    pdf = _cyclic_parent_form(self_parent=self_parent)
     faulthandler.dump_traceback_later(20, exit=True)  # a hang fails the run, not stalls it
     try:
         assert inspect(pdf) == []
@@ -713,4 +712,66 @@ def test_template_cannot_widen_the_data_to_name_an_image_file(tmp_path, template
     data = {"folder": str(tmp_path), "allowed": [], "nested": {}, "signing": None}
     with pytest.raises(FieldError, match="photo"):
         fill(image_form(photo=template), data)
-    assert data["allowed"] == [] and data["nested"] == {}
+    assert data["allowed"] == []
+    assert data["nested"] == {}
+
+
+def test_fill_many_refuses_image_paths_missing_from_a_row(tmp_path):
+    image = tmp_path / "stamp.png"
+    image.write_bytes(png())
+    pdf = image_form(photo="{{ '" + str(image) + "' }}")
+    filled, error = core.fill_many(pdf, [{"asset": image, "signing": None}, {"signing": None}])
+    assert isinstance(filled, bytes)
+    assert len(PdfReader(BytesIO(filled)).pages[0].images) == 1
+    assert isinstance(error, FieldError)
+    assert error.field == "photo"
+    assert "a template cannot name an image file; pass its path in the data" in str(error)
+
+
+def test_schema_environment_blocks_path_attributes(make_pdf, monkeypatch, tmp_path):
+    find_undeclared_variables = core.meta.find_undeclared_variables
+
+    def check_environment(tree):
+        # Schema parses tooltips without rendering them. Check the parser's environment.
+        result = tree.environment.getattr(tmp_path, "name")
+        assert isinstance(result, core.Undefined)
+        return find_undeclared_variables(tree)
+
+    monkeypatch.setattr(core.meta, "find_undeclared_variables", check_environment)
+    assert "note" in core.schema(make_pdf({"filtered": "{{ note.name }}"}))["required"]
+
+
+@pytest.mark.parametrize("template", ["{{ customer.name }}", "{{ first }}"])
+def test_mapping_proxy_data_renders(make_pdf, data, template):
+    row = MappingProxyType({**data, "customer": MappingProxyType({"name": "Ada"})})
+    result = fill(make_pdf({"filtered": template}), row)
+    assert fields(result)["filtered"]["/V"] == "Ada"
+
+
+def test_fill_many_isolates_mapping_proxy_row_errors(make_pdf, data):
+    pdf = make_pdf({"filtered": "{{ customer.name }}"})
+    rows = [
+        {**data, "customer": MappingProxyType({"name": "Ada"})},
+        {**data, "customer": MappingProxyType({})},
+        {**data, "customer": MappingProxyType({"name": "Grace"})},
+    ]
+    first, error, last = core.fill_many(pdf, iter(rows))
+    assert fields(first)["filtered"]["/V"] == "Ada"
+    assert isinstance(error, FieldError)
+    assert error.field == "filtered"
+    assert "name" in str(error)
+    assert fields(last)["filtered"]["/V"] == "Grace"
+
+
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize(
+    "container,mutation",
+    [([], "names.append(first)"), ({}, "names.update(name=first)"), (set(), "names.add(first)")],
+)
+def test_fill_many_refuses_container_mutation(make_pdf, data, container, mutation, strict):
+    pdf = make_pdf({"filtered": "{% set ignored = " + mutation + " %}{{ names | length }}"})
+    row = {**data, "names": container}
+    results = core.fill_many(pdf, [row, row], strict=strict)
+    assert all(isinstance(item, FieldError) and item.field == "filtered" for item in results)
+    assert all("unsafe" in str(item) for item in results)
+    assert not container

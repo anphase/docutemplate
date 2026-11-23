@@ -111,9 +111,9 @@ rows against it before calling `fill`.
 Install the `images` extra. Set the tooltip to a single expression such as
 `{{ signature_image }}` and pass `{"signature_image": Path("signature.png")}` or
 `{"signature_image": image_bytes}`. Single expressions retain the original path
-or bytes. More complex templates can render a path or the name of a top-level
-data key containing the image. Fields without templates also accept paths or
-bytes directly by field name. A blank or `None` image is skipped. Signature
+or bytes. More complex templates can render a path held in the data or the name
+of a top-level data key holding the image. Fields without templates also accept
+paths or bytes directly by field name. A blank or `None` image is skipped. Signature
 fields stamp a handwritten image; they do not create cryptographic signatures.
 
 Pushbutton fields (`/FT /Btn` with the pushbutton flag) are treated as image
