@@ -552,6 +552,7 @@ def test_schema_keeps_field_constraints_for_a_required_variable(make_pdf):
     assert result["required"] == ["contact"]
     assert result["properties"]["contact"] == {"enum": ["email", "post"]}
 
+
 class _Node(dict):
     """A dictionary standing in for a pypdf object, with a budget of dereferences."""
 
