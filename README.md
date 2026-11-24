@@ -124,7 +124,7 @@ Give each image button a tooltip template or supply its image by field name.
 
 ### Errors and template behavior
 
-Templates use `jinja2.sandbox.SandboxedEnvironment` with autoescaping disabled.
+Templates use `jinja2.sandbox.ImmutableSandboxedEnvironment` with autoescaping disabled.
 `strict=True` uses `StrictUndefined`. Missing variables raise `FieldError` with
 the field name and Jinja's variable description; syntax errors also name the
 field. Set `strict=False` to use Jinja's ordinary undefined behavior: a missing
@@ -136,7 +136,10 @@ Catch `docutemplate.DocutemplateError` for document/template/value errors,
 for PDF parsing/filling errors. File access errors remain `OSError` subclasses.
 AcroForm PDFs are supported; encrypted PDFs must be decrypted first. XFA-only
 forms are not supported. Use trusted data objects; sandboxing restricts template
-access but does not impose resource limits on template evaluation.
+access but does not impose resource limits on template evaluation. A tooltip such as
+`{{ 9**9**9 }}` or two nested loops runs until the process is stopped, so when the
+PDFs come from people you do not trust, call `fill`, `fill_many` and `schema` in a
+worker process with a time limit and a memory limit.
 
 ## CLI
 

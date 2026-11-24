@@ -23,6 +23,9 @@ All notable changes to this project are documented here, in the
 ### Security
 - Render templates with copies of caller data, block access to path object attributes, and
   restrict image reads to paths supplied in the original data. Stop at cycles in PDF field parents.
+- README: the template sandbox is the immutable one, and a template from an untrusted PDF can
+  use unbounded CPU and memory, so run fills of untrusted forms in a worker with time and memory
+  limits. (2026-11-25)
 
 ## [0.1.0]
 
