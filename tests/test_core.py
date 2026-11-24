@@ -775,3 +775,76 @@ def test_fill_many_refuses_container_mutation(make_pdf, data, container, mutatio
     assert all(isinstance(item, FieldError) and item.field == "filtered" for item in results)
     assert all("unsafe" in str(item) for item in results)
     assert not container
+
+
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize(
+    ("template", "message"),
+    [
+        ("{{ folder }}/private.png", "template cannot name an image file"),
+        ("{{ picture.with_name('private.png').read_bytes() }}", "is unsafe"),
+        (
+            "{% set ignored = allowed.append(folder ~ '/private.png') %}{{ folder }}/private.png",
+            "is unsafe",
+        ),
+        (
+            "{% set ignored = nested.update(extra=folder ~ '/private.png') %}{{ nested.extra }}",
+            "is unsafe",
+        ),
+        (
+            "{% set ignored = nested.update(extra=folder ~ '/private.png') %}extra",
+            "is unsafe",
+        ),
+    ],
+)
+def test_fill_many_preserves_image_security(tmp_path, template, message, strict):
+    private = tmp_path / "private.png"
+    private.write_bytes(png())
+    held = tmp_path / "stamp.png"
+    held.write_bytes(png())
+    row = {
+        "folder": str(tmp_path),
+        "picture": held,
+        "allowed": [],
+        "nested": {},
+        "signing": None,
+    }
+    results = core.fill_many(image_form(photo=template), [row, row], strict=strict)
+    assert len(results) == 2
+    for item in results:
+        assert isinstance(item, FieldError) and item.field == "photo"
+        assert message in str(item)
+    assert row["allowed"] == [] and row["nested"] == {}
+
+
+@pytest.mark.parametrize("flatten", [True, False])
+def test_fill_many_image_allowlist_is_per_row(tmp_path, flatten):
+    private = tmp_path / "private.png"
+    private.write_bytes(png())
+    pdf = image_form(photo="{{ folder }}/private.png")
+    rows = [
+        {"folder": str(tmp_path), "picture": private, "signing": png()},
+        {"folder": str(tmp_path), "signing": None},
+        {"folder": str(tmp_path), "picture": str(private), "signing": private},
+    ]
+    first, error, last = core.fill_many(BytesIO(pdf), iter(rows), flatten=flatten)
+    assert isinstance(error, FieldError)
+    assert "template cannot name an image file" in str(error)
+    for result in (first, last):
+        page = PdfReader(BytesIO(result)).pages[0]
+        assert page.get_contents().get_data().count(b" Do") == 2
+        if flatten:
+            assert not page.get("/Annots")
+
+
+def test_schema_does_not_execute_image_templates(monkeypatch):
+    pdf = image_form(photo="{{ picture.with_name('private.png').read_bytes() }}")
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("schema must not evaluate templates or read image files")
+
+    monkeypatch.setattr(core, "_render", unexpected)
+    monkeypatch.setattr(core.Path, "read_bytes", unexpected)
+    result = core.schema(pdf)
+    assert result["required"] == ["picture", "signing"]
+    assert result["properties"] == {"picture": {}, "signing": {}}
